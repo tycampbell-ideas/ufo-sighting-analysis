@@ -1,0 +1,273 @@
+---
+title: "UFO Sightings: A Visual Analysis"
+subtitle: "Exploring patterns in reported sightings across the United States"
+author: "Ty Campbell"
+date: today
+date-format: "MMMM D, YYYY"
+
+format:
+  html:
+    theme: none
+    css: styles.css
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    toc-location: left
+    smooth-scroll: true
+    code-fold: true
+    code-tools: true
+    fig-align: center
+    fig-width: 9
+    fig-height: 5.5
+    highlight-style: github
+
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r, include = FALSE}
+library(dplyr)
+library(ggplot2)
+library(maps)
+library(sf)
+library(gt)
+library(lubridate)
+library(hms)
+library(forcats)
+```
+
+
+```{r, include = FALSE}
+df <- read.csv('ufo_data_nuforc.csv')
+df <- df %>%
+    filter(state != 'AK' & state != 'HI')
+```
+
+## Introduction
+
+In this report, we will be examining UFO sightings over time across the United States. The objective of our analysis is to see where the sightings are occurring the most frequently, what day of the week and time of day, and if there is any correlation with city population and the number of sightings in that city.
+
+## Where in the US are we seeing the most sightings?
+
+### Map of the US
+```{r}
+us_map <- st_as_sf(map('state', fill = TRUE, plot = FALSE))
+data_points <- st_as_sf(df, coords = c('lng', 'lat'), crs = 4326)
+# us map plot
+ggplot() + 
+  geom_sf(data = us_map, fill = 'white', color = "grey50") + 
+  geom_sf(data = data_points, alpha = .4, color = '#7c6af7', size = 4) + 
+  labs(
+    title = 'Where are the UFO sightings Occuring?',
+  ) + 
+  theme_minimal()
+```
+
+Looking at the map, we can see that there are a heavy amount of sightings in what appears to be the northeast coast, California, and in Florida.
+
+Here is a breakdown of the states with the most sightings: 
+
+### Top 5 States in UFO Sightings
+```{r}
+df %>%
+  group_by(state) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))%>%
+  slice_head(n = 5) %>%
+  gt(rowname_col = 'state') %>%
+  cols_label(n = 'Total') %>%
+  tab_header(title = 'Most Sightings by State',
+subtitle = 'Larger States are Associated with More UFO Sightings') %>%
+  opt_stylize(style = 2, color = 'blue')
+```
+
+As we can see, the top 3 states are Florida, California, and Texas. These states have a heavy population, so we can infer that sightings can potentially be associated with denser populations. 
+
+### Top 5 Cities in UFO Sightings
+
+
+```{r}
+# city table
+df %>%
+  group_by(city) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))%>%
+  slice_head(n = 5) %>%
+  gt(rowname_col = 'city') %>%
+  cols_label(n = 'Total') %>%
+  tab_header(title = 'Most Sightings by City',
+subtitle = 'Populated States are Associated with More UFO Sightings') %>%
+  opt_stylize(style = 2, color = 'blue')
+```
+
+We can see that some of the cities here are located in one of the top 5 states. However, none of these cities are located in Florida or California. This could be because of how many square miles these two states have. 
+
+## Is there a relationship between city population and the number of sightings in that city?
+
+In our dataset, we are given the city population that corresponds to the city that the sighting of the UFO was in. Let's see if there is any correlation with the two variables: city population and number of city sightings.
+
+
+```{r}
+df %>%
+  group_by(city) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))%>%
+  as.data.frame() -> city_totals
+
+city_correlation <- inner_join(df, city_totals, by = 'city')
+city_correlation %>%
+  ggplot(aes(x = n, y = population)) + 
+  geom_point(alpha =.5, color = '#7c6af7') + 
+  geom_smooth(color = '#7c6af7', method = 'lm', se = FALSE)+
+  labs(
+    title = 'Relationship Between City Population and UFO Sightings',
+    x = 'UFO Sightings',
+    y = 'City Population'
+  ) + 
+  theme_minimal()
+```
+
+We can see that there is a steady positive relationship between the number of city residents and number of UFO sightings. The correlation coefficient was about **.53**. 
+**This does not mean that city population causes there to be a high amount of sightings. There is just a positive trend between the two variables**.
+
+## What time of day and day of week are we seeing the most sightings?
+
+### UFO Sightings by Day of Week
+```{r}
+df <- df %>%
+  mutate(
+    date = as.Date(date, format = '%m/%d/%Y'),
+    time = as_hms(time)
+  )
+df <- df %>%
+  mutate(
+    time_of_day = hour(time),
+    day_of_week = wday(date, label = TRUE)
+  )
+
+# DOW Plot
+df %>%
+  group_by(day_of_week) %>%
+  summarise(
+    total = n()
+  ) %>%
+    ggplot(aes(x = reorder(day_of_week,-total), y = total, fill = day_of_week)) + 
+  geom_col(fill = '#7c6af7', col = 'black') + 
+  labs(
+    title = 'Sightings by Day of Week',
+    x = NULL,
+    y = 'Sightings Count'
+  ) + 
+  theme_minimal() + 
+  geom_text(aes(label = total, vjust = -.5)) + 
+  scale_y_continuous(expand = expansion(mult = c(0,.15)))
+```
+
+Saturday and Friday are the top two days for UFO sightings. This could be because these two days, especially during the evening/night, have a high amount of individuals that are not working. Let's now look and see what time of day these UFO sightings are occuring. 
+
+### UFO Sightings by Time of Day and Day of Week
+
+```{r}
+df <- df %>%
+  mutate(
+    bins = case_when(
+      between(time_of_day, 0, 6) ~ '12am-6am',
+      between(time_of_day, 7, 12) ~ '7am-12pm',
+      between(time_of_day, 13, 18) ~ '1pm-6pm',
+      between(time_of_day, 19, 23) ~ '7pm-11pm'
+    )
+  )
+
+df %>%
+  group_by(day_of_week, bins) %>%
+  summarise(
+    total = n(),
+    .groups = 'drop'
+  ) %>% 
+  as.data.frame() %>%
+  mutate(
+    day_of_week = fct_reorder(day_of_week, total, .fun = sum, .desc = TRUE)
+  ) %>%
+  ggplot(aes(x = day_of_week, y = total, fill = bins)) + 
+  geom_col(position = "stack") + 
+  geom_text(aes(label = total), position = position_stack(vjust = .5)) + 
+  theme_minimal() + 
+  labs(
+    title = 'UFO Sightings by Time and Day',
+    x = NULL,
+    y = 'UFO Sightings',
+    fill = NULL
+  ) + 
+  theme(legend.position = "bottom") + 
+  scale_fill_manual(values = c('7pm-11pm' = '#7c6af7','12am-6am' = '#4fc3f7', '7am-12pm' = '#000080', '1pm-6pm' = '#E6E6FA' ))
+```
+
+There are a heavy amount of sightings Friday and Saturday from 7pm-11pm. Because of this result, it would make interesting research seeing if alcohol consumption/being under the influence correlates to UFO sightings.
+
+## UFO sightings over time
+
+## Year Over Year UFO Sighting Totals
+```{r}
+df %>%
+  mutate(
+    year = year(date)
+  ) %>%
+  filter(year > 2015)%>%
+  group_by(year) %>%
+  summarise(
+    n = n()
+  ) %>%
+  ggplot(aes(x = year, y = n)) + 
+  geom_line(col = '#7c6af7') +
+  geom_point(col = '#7c6af7') + 
+  geom_text(aes(label = n, vjust = -.5)) + 
+  theme_minimal() + 
+  scale_y_continuous(expand = expansion(mult = c(.1,.2))) + 
+  labs(
+    title = 'Yearly Trend of UFO Sightings',
+    x = NULL,
+    y = 'UFO Sightings'
+  )
+```
+
+There appears to be a very high increase in UFO sightings in 2022. The amount of sightings increased almost **790%** from 2021 to 2022. According to Claude, 2022 wasn't necessarily a surge in weird things in the sky, it was a surge in reporting driven by new government offices, reduced stigma, better sensors, and intense media coverage.
+
+## Top 5 Days with Most UFO Sightings
+
+```{r}
+df %>%
+  group_by(date) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n)) %>%
+  slice_head(n = 5) %>%
+  gt(rowname_col = 'date') %>%
+  cols_label(n = 'Total Sightings') %>%
+  tab_header(title = 'Top 5 Days with the Most Sightings') %>%
+  opt_stylize(style = 2, color = 'blue')
+```
+
+Using Claude, I was able to have the agent do a deep web search as to why these days had adnormally high sightings in UFOs:
+
+- September 24, 2022 (24 sightings — the highest day) — No single smoking-gun event found for this exact date, but it falls squarely in the period right after the Pentagon formally established AARO (the All-domain Anomaly Resolution Office) in July 2022. Reporting was surging across the board that fall due to reduced stigma and new official channels. September is also a common time for clear evening skies and people spending time outdoors, which tends to drive up reports. It's also worth noting that TikTok showed a flurry of activity around "UFO over High School Football Game Missouri, September 23, 2022" and similar posts — one widely shared sighting the night before could have primed people to look up and report.
+- March 1, 2023 (19 sightings) — This one has a clear explanation. March 1, 2023 was the height of a conjunction of Jupiter and Venus in the night sky, when the two planets appeared to almost merge into a single point of light. Multiple UFO reports that night were directly tied to this. Multiple people in Pennsylvania, for example, called 911 about hovering oval objects that turned out to be the Jupiter-Venus conjunction. Source New Mexico
+- February 13, 2023 (12 sightings) — This is very likely related to the balloon/object shootdown frenzy happening at that exact moment. U.S. fighter jets shot down four high-altitude objects in quick succession in early-to-mid February 2023, and the news coverage was wall-to-wall. After the sightings of a Chinese balloon in 2023, the U.S. began more closely scrutinizing its airspace at high altitudes, including radar enhancements that allowed it to better categorize and track slower-moving objects. With the entire country watching the sky and media coverage at a peak, public reports naturally spiked. NPRWikipedia
+- January 31, 2022 (14 sightings) — No specific astronomical event stands out for this date. It was a Monday, and nothing in the news directly links to a UFO trigger. This may just be a statistical artifact — with enough days, a few will cluster high by chance.
+June 19, 2022 (13 sightings) — This was Juneteenth, a federal holiday falling on a Sunday in 2022. More people outdoors at evening celebrations and cookouts likely means more eyes on the sky — the same pattern researchers note for summer holiday weekends generally.
+
+## Conclusion and summary of key findings
+
+In summary, high amounts of sightings are strongly associated with denser population states and cities and strongly associated with Friday and Saturdays nights (with theorized relation with alcohol consumption).
+
+2022 had an abnormal amount of sightings. This was not necessarily due to an actual increase in witnessed abnormal objects, it was more likely due to an increase in media coverage and reporting. 
+
+Some of the days that had high reports of UFO sightings were linked to situations that happened during that day, whether that was more eyes in the sky because of a holiday, weird phenomenons with planets aligning, or military activity. 
